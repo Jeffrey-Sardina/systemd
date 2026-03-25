@@ -10,9 +10,18 @@ typedef enum ImageFormat {
         _IMAGE_FORMAT_INVALID = -EINVAL,
 } ImageFormat;
 
+typedef enum DiskType {
+        DISK_TYPE_VIRTIO_BLK,
+        DISK_TYPE_VIRTIO_SCSI,
+        DISK_TYPE_NVME,
+        _DISK_TYPE_MAX,
+        _DISK_TYPE_INVALID = -EINVAL,
+} DiskType;
+
 typedef struct ExtraDrive {
         char *path;
         ImageFormat format;
+        DiskType disk_type;
 } ExtraDrive;
 
 typedef struct ExtraDriveContext {
@@ -27,6 +36,7 @@ typedef enum ConsoleMode {
         CONSOLE_READ_ONLY,      /* ptyfwd, but in read-only mode */
         CONSOLE_NATIVE,         /* qemu's native TTY handling */
         CONSOLE_GUI,            /* qemu's graphical UI */
+        CONSOLE_HEADLESS,       /* no console */
         _CONSOLE_MODE_MAX,
         _CONSOLE_MODE_INVALID = -EINVAL,
 } ConsoleMode;
@@ -42,4 +52,5 @@ typedef enum SettingsMask {
 } SettingsMask;
 
 DECLARE_STRING_TABLE_LOOKUP(console_mode, ConsoleMode);
+DECLARE_STRING_TABLE_LOOKUP(disk_type, DiskType);
 DECLARE_STRING_TABLE_LOOKUP(image_format, ImageFormat);

@@ -65,6 +65,7 @@
 #include "ptyfwd.h"
 #include "random-util.h"
 #include "rm-rf.h"
+#include "sha256.h"
 #include "signal-util.h"
 #include "snapshot-util.h"
 #include "socket-util.h"
@@ -72,6 +73,7 @@
 #include "stdio-util.h"
 #include "string-util.h"
 #include "strv.h"
+#include "swtpm-util.h"
 #include "sync-util.h"
 #include "terminal-util.h"
 #include "tmpfile-util.h"
@@ -88,13 +90,15 @@
 
 #define VM_TAP_HASH_KEY SD_ID128_MAKE(01,d0,c6,4c,2b,df,24,fb,c0,f8,b2,09,7d,59,b2,93)
 
-typedef enum TpmStateMode {
-        TPM_STATE_OFF,      /* keep no state around */
-        TPM_STATE_AUTO,     /* keep state around if not ephemeral, derive path from image/directory */
-        TPM_STATE_PATH,     /* explicitly specified location */
-        _TPM_STATE_MODE_MAX,
-        _TPM_STATE_MODE_INVALID = -EINVAL,
-} TpmStateMode;
+/* An enum controlling how auxiliary state for the VM are maintained, i.e. the TPM state and the EFI variable
+ * NVRAM. */
+typedef enum StateMode {
+        STATE_OFF,      /* keep no state around */
+        STATE_AUTO,     /* keep state around if not ephemeral, derive path from image/directory */
+        STATE_PATH,     /* explicitly specified location */
+        _STATE_MODE_MAX,
+        _STATE_MODE_INVALID = -EINVAL,
+} StateMode;
 
 typedef struct SSHInfo {
         unsigned cid;
@@ -140,11 +144,14 @@ static char *arg_background = NULL;
 static bool arg_pass_ssh_key = true;
 static char *arg_ssh_key_type = NULL;
 static bool arg_discard_disk = true;
+static DiskType arg_image_disk_type = DISK_TYPE_VIRTIO_BLK;
 static struct ether_addr arg_network_provided_mac = {};
 static char **arg_smbios11 = NULL;
 static uint64_t arg_grow_image = 0;
 static char *arg_tpm_state_path = NULL;
-static TpmStateMode arg_tpm_state_mode = TPM_STATE_AUTO;
+static StateMode arg_tpm_state_mode = STATE_AUTO;
+static char *arg_efi_nvram_state_path = NULL;
+static StateMode arg_efi_nvram_state_mode = STATE_AUTO;
 static bool arg_ask_password = true;
 static bool arg_notify_ready = true;
 static char **arg_bind_user = NULL;
@@ -171,6 +178,7 @@ STATIC_DESTRUCTOR_REGISTER(arg_background, freep);
 STATIC_DESTRUCTOR_REGISTER(arg_ssh_key_type, freep);
 STATIC_DESTRUCTOR_REGISTER(arg_smbios11, strv_freep);
 STATIC_DESTRUCTOR_REGISTER(arg_tpm_state_path, freep);
+STATIC_DESTRUCTOR_REGISTER(arg_efi_nvram_state_path, freep);
 STATIC_DESTRUCTOR_REGISTER(arg_property, strv_freep);
 STATIC_DESTRUCTOR_REGISTER(arg_bind_user, strv_freep);
 STATIC_DESTRUCTOR_REGISTER(arg_bind_user_shell, freep);
@@ -200,6 +208,8 @@ static int help(void) {
                "  -x --ephemeral           Run VM with snapshot of the disk or directory\n"
                "  -i --image=FILE|DEVICE   Root file system disk image or device for the VM\n"
                "     --image-format=FORMAT Specify disk image format (raw, qcow2; default: raw)\n"
+               "     --image-disk-type=TYPE\n"
+               "                           Specify disk type (virtio-blk, virtio-scsi, nvme; default: virtio-blk)\n"
                "\n%3$sHost Configuration:%4$s\n"
                "     --cpus=CPUS           Configure number of CPUs in guest\n"
                "     --ram=BYTES           Configure guest's RAM size\n"
@@ -209,6 +219,8 @@ static int help(void) {
                "     --tpm=BOOL            Enable use of a virtual TPM\n"
                "     --tpm-state=off|auto|PATH\n"
                "                           Where to store TPM state\n"
+               "     --efi-nvram-state=off|auto|PATH\n"
+               "                           Where to store EFI Variable NVRAM state\n"
                "     --linux=PATH          Specify the linux kernel for direct kernel boot\n"
                "     --initrd=PATH         Specify the initrd for direct kernel boot\n"
                "  -n --network-tap         Create a TAP device for networking\n"
@@ -238,9 +250,10 @@ static int help(void) {
                "                           Mount a file or directory from the host into the VM\n"
                "     --bind-ro=SOURCE[:TARGET]\n"
                "                           Mount a file or directory, but read-only\n"
-               "     --extra-drive=[FORMAT:]PATH\n"
-               "                           Adds an additional disk to the virtual machine\n"
-               "                           (FORMAT: raw, qcow2; default: raw)\n"
+               "     --extra-drive=[FORMAT:][DISKTYPE:]PATH\n"
+               "                           Adds an additional disk to the VM\n"
+               "                           FORMAT: raw, qcow2\n"
+               "                           DISKTYPE: virtio-blk, virtio-scsi, nvme\n"
                "     --bind-user=NAME       Bind user from host to virtual machine\n"
                "     --bind-user-shell=BOOL|PATH\n"
                "                            Configure the shell to use for --bind-user= users\n"
@@ -252,7 +265,8 @@ static int help(void) {
                "     --pass-ssh-key=BOOL   Create an SSH key to access the VM\n"
                "     --ssh-key-type=TYPE   Choose what type of SSH key to pass\n"
                "\n%3$sInput/Output:%4$s\n"
-               "     --console=MODE        Console mode (interactive, native, gui)\n"
+               "     --console=MODE        Console mode (interactive, native, gui, read-only\n"
+               "                           or headless)\n"
                "     --background=COLOR    Set ANSI color for background\n"
                "\n%3$sCredentials:%4$s\n"
                "     --set-credential=ID:VALUE\n"
@@ -317,6 +331,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_CONSOLE,
                 ARG_BACKGROUND,
                 ARG_TPM_STATE,
+                ARG_EFI_NVRAM_STATE,
                 ARG_NO_ASK_PASSWORD,
                 ARG_PROPERTY,
                 ARG_NOTIFY_READY,
@@ -326,6 +341,7 @@ static int parse_argv(int argc, char *argv[]) {
                 ARG_SYSTEM,
                 ARG_USER,
                 ARG_IMAGE_FORMAT,
+                ARG_IMAGE_DISK_TYPE,
         };
 
         static const struct option options[] = {
@@ -335,6 +351,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "no-pager",          no_argument,       NULL, ARG_NO_PAGER          },
                 { "image",             required_argument, NULL, 'i'                   },
                 { "image-format",      required_argument, NULL, ARG_IMAGE_FORMAT      },
+                { "image-disk-type",   required_argument, NULL, ARG_IMAGE_DISK_TYPE   },
                 { "ephemeral",         no_argument,       NULL, 'x'                   },
                 { "directory",         required_argument, NULL, 'D'                   },
                 { "machine",           required_argument, NULL, 'M'                   },
@@ -374,6 +391,7 @@ static int parse_argv(int argc, char *argv[]) {
                 { "smbios11",          required_argument, NULL, 's'                   },
                 { "grow-image",        required_argument, NULL, 'G'                   },
                 { "tpm-state",         required_argument, NULL, ARG_TPM_STATE         },
+                { "efi-nvram-state",   required_argument, NULL, ARG_EFI_NVRAM_STATE   },
                 { "no-ask-password",   no_argument,       NULL, ARG_NO_ASK_PASSWORD   },
                 { "property",          required_argument, NULL, ARG_PROPERTY          },
                 { "notify-ready",      required_argument, NULL, ARG_NOTIFY_READY      },
@@ -422,6 +440,13 @@ static int parse_argv(int argc, char *argv[]) {
                         if (arg_image_format < 0)
                                 return log_error_errno(arg_image_format,
                                                        "Invalid image format: %s", optarg);
+                        break;
+
+                case ARG_IMAGE_DISK_TYPE:
+                        arg_image_disk_type = disk_type_from_string(optarg);
+                        if (arg_image_disk_type < 0)
+                                return log_error_errno(arg_image_disk_type,
+                                                       "Invalid image disk type: %s", optarg);
                         break;
 
                 case 'M':
@@ -560,21 +585,36 @@ static int parse_argv(int argc, char *argv[]) {
 
                 case ARG_EXTRA_DRIVE: {
                         ImageFormat format = IMAGE_FORMAT_RAW;
+                        DiskType extra_disk_type = _DISK_TYPE_INVALID;
                         const char *dp = optarg;
 
-                        const char *colon = strchr(dp, ':');
-                        if (colon) {
-                                _cleanup_free_ char *fs = strndup(optarg, colon - optarg);
-                                if (!fs)
+                        /* Parse optional colon-separated prefixes. The format and disk type
+                         * value sets don't overlap, so they can appear in any order. */
+                        for (;;) {
+                                const char *colon = strchr(dp, ':');
+                                if (!colon)
+                                        break;
+
+                                _cleanup_free_ char *prefix = strndup(dp, colon - dp);
+                                if (!prefix)
                                         return log_oom();
 
-                                ImageFormat f = image_format_from_string(fs);
-                                if (f < 0)
-                                        log_debug_errno(f, "Cannot parse '%s' as an image format, assuming it is a part of path, ignoring.", fs);
-                                else {
+                                ImageFormat f = image_format_from_string(prefix);
+                                if (f >= 0) {
                                         format = f;
                                         dp = colon + 1;
+                                        continue;
                                 }
+
+                                DiskType dt = disk_type_from_string(prefix);
+                                if (dt >= 0) {
+                                        extra_disk_type = dt;
+                                        dp = colon + 1;
+                                        continue;
+                                }
+
+                                /* Not a recognized prefix, treat the rest as the path */
+                                break;
                         }
 
                         _cleanup_free_ char *drive_path = NULL;
@@ -588,6 +628,7 @@ static int parse_argv(int argc, char *argv[]) {
                         arg_extra_drives.drives[arg_extra_drives.n_drives++] = (ExtraDrive) {
                                 .path = TAKE_PTR(drive_path),
                                 .format = format,
+                                .disk_type = extra_disk_type,
                         };
 
                         break;
@@ -710,7 +751,7 @@ static int parse_argv(int argc, char *argv[]) {
                                 if (r < 0)
                                         return r;
 
-                                arg_tpm_state_mode = TPM_STATE_PATH;
+                                arg_tpm_state_mode = STATE_PATH;
                                 break;
                         }
 
@@ -720,8 +761,28 @@ static int parse_argv(int argc, char *argv[]) {
                         if (r < 0)
                                 return log_error_errno(r, "Failed to parse --tpm-state= parameter: %s", optarg);
 
-                        arg_tpm_state_mode = r ? TPM_STATE_AUTO : TPM_STATE_OFF;
+                        arg_tpm_state_mode = r ? STATE_AUTO : STATE_OFF;
                         arg_tpm_state_path = mfree(arg_tpm_state_path);
+                        break;
+
+                case ARG_EFI_NVRAM_STATE:
+                        if (path_is_valid(optarg) && (path_is_absolute(optarg) || path_startswith(optarg, "./"))) {
+                                r = parse_path_argument(optarg, /* suppress_root= */ false, &arg_efi_nvram_state_path);
+                                if (r < 0)
+                                        return r;
+
+                                arg_efi_nvram_state_mode = STATE_PATH;
+                                break;
+                        }
+
+                        r = isempty(optarg) ? false :
+                                streq(optarg, "auto") ? true :
+                                parse_boolean(optarg);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to parse --efi-nvram-state= parameter: %s", optarg);
+
+                        arg_efi_nvram_state_mode = r ? STATE_AUTO : STATE_OFF;
+                        arg_efi_nvram_state_path = mfree(arg_efi_nvram_state_path);
                         break;
 
                 case ARG_NO_ASK_PASSWORD:
@@ -1325,48 +1386,11 @@ static int start_tpm(
         if (r < 0)
                 return log_error_errno(r, "Failed to create TPM state directory '%s': %m", state_dir);
 
-        _cleanup_free_ char *swtpm_setup = NULL;
-        r = find_executable("swtpm_setup", &swtpm_setup);
+        r = manufacture_swtpm(state_dir, /* secret= */ NULL);
         if (r < 0)
-                return log_error_errno(r, "Failed to find swtpm_setup binary: %m");
+                return r;
 
-        /* Try passing --profile-name default-v2 first, in order to support RSA4096 pcrsig keys, which was
-         * added in 0.11. */
-        _cleanup_strv_free_ char **argv = strv_new(
-                        swtpm_setup,
-                        "--tpm-state", state_dir,
-                        "--tpm2",
-                        "--pcr-banks", "sha256",
-                        "--not-overwrite",
-                        "--profile-name", "default-v2");
-        if (!argv)
-                return log_oom();
-
-        r = pidref_safe_fork("(swtpm-setup)", FORK_CLOSE_ALL_FDS|FORK_LOG|FORK_WAIT, /* ret= */ NULL);
-        if (r == 0) {
-                /* Child */
-                execvp(argv[0], argv);
-                log_error_errno(errno, "Failed to execute '%s': %m", argv[0]);
-                _exit(EXIT_FAILURE);
-        }
-        if (r == -EPROTO) {
-                /* If swtpm_setup fails, try again removing the default-v2 profile, as it might be an older
-                 * version. */
-                strv_remove(argv, "--profile-name");
-                strv_remove(argv, "default-v2");
-
-                r = pidref_safe_fork("(swtpm-setup)", FORK_CLOSE_ALL_FDS|FORK_LOG|FORK_WAIT, /* ret= */ NULL);
-                if (r == 0) {
-                        /* Child */
-                        execvp(argv[0], argv);
-                        log_error_errno(errno, "Failed to execute '%s': %m", argv[0]);
-                        _exit(EXIT_FAILURE);
-                }
-        }
-        if (r < 0)
-                return log_error_errno(r, "Failed to run swtpm_setup: %m");
-
-        strv_free(argv);
+        _cleanup_strv_free_ char **argv = NULL;
         argv = strv_new(sd_socket_activate, "--listen", listen_address, swtpm, "socket", "--tpm2", "--tpmstate");
         if (!argv)
                 return log_oom();
@@ -1558,7 +1582,6 @@ static int start_virtiofsd(
                         "--shared-dir", source_uid == FOREIGN_UID_MIN ? "/run/systemd/mount-rootfs" : directory,
                         "--xattr",
                         "--fd", sockstr,
-                        "--sandbox=chroot",
                         "--no-announce-submounts");
         if (!argv)
                 return log_oom();
@@ -1946,6 +1969,55 @@ static int on_request_stop(sd_bus_message *m, void *userdata, sd_bus_error *erro
         log_info("VM termination requested. Exiting.");
         sd_event_exit(sd_bus_get_event(sd_bus_message_get_bus(m)), 0);
 
+        return 0;
+}
+
+static int make_sidecar_path(const char *suffix, char **ret) {
+        int r;
+
+        assert(suffix);
+        assert(ret);
+
+        const char *p = ASSERT_PTR(arg_image ?: arg_directory);
+
+        _cleanup_free_ char *parent = NULL, *filename = NULL;
+        r = path_split_prefix_filename(p, &parent, &filename);
+        if (r < 0)
+                return log_error_errno(r, "Failed to extract parent directory and filename from '%s': %m", p);
+
+        if (!strextend(&filename, suffix))
+                return log_oom();
+
+        _cleanup_free_ char *j = path_join(parent, filename);
+        if (!j)
+                return log_oom();
+
+        *ret = TAKE_PTR(j);
+        return 0;
+}
+
+/* Device serial numbers have length limits (e.g. 20 for NVMe, 30 for SCSI).
+ * If the filename fits, use it directly; otherwise hash it with SHA-256 and
+ * take the first max_len hex characters. max_len must be even and <= 64.
+ * The filename should already be QEMU-escaped (commas doubled) so that the
+ * result can be embedded directly in a -device argument. */
+static int disk_serial(const char *filename, size_t max_len, char **ret) {
+        assert(filename);
+        assert(ret);
+        assert(max_len % 2 == 0);
+        assert(max_len <= SHA256_DIGEST_SIZE * 2);
+
+        if (strlen(filename) <= max_len)
+                return strdup_to(ret, filename);
+
+        uint8_t hash[SHA256_DIGEST_SIZE];
+        sha256_direct(filename, strlen(filename), hash);
+
+        _cleanup_free_ char *serial = hexmem(hash, max_len / 2);
+        if (!serial)
+                return -ENOMEM;
+
+        *ret = TAKE_PTR(serial);
         return 0;
 }
 
@@ -2349,6 +2421,13 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
                                 "-mon", "console");
                 break;
 
+        case CONSOLE_HEADLESS:
+                r = strv_extend_many(
+                                &cmdline,
+                                "-nographic",
+                                "-nodefaults");
+                break;
+
         default:
                 assert_not_reached();
         }
@@ -2367,30 +2446,67 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
         if (r < 0)
                 return log_oom();
 
-        _cleanup_(unlink_and_freep) char *ovmf_vars_to = NULL;
-        if (ovmf_config->supports_sb) {
-                const char *ovmf_vars_from = ovmf_config->vars;
-                _cleanup_free_ char *escaped_ovmf_vars_to = NULL;
-                _cleanup_close_ int source_fd = -EBADF, target_fd = -EBADF;
+        if (arg_efi_nvram_state_mode == STATE_AUTO && !arg_ephemeral) {
+                assert(!arg_efi_nvram_state_path);
 
-                r = tempfn_random_child(NULL, "vmspawn-", &ovmf_vars_to);
+                r = make_sidecar_path(".efinvramstate", &arg_efi_nvram_state_path);
                 if (r < 0)
                         return r;
 
-                source_fd = open(ovmf_vars_from, O_RDONLY|O_CLOEXEC);
-                if (source_fd < 0)
-                        return log_error_errno(source_fd, "Failed to open OVMF vars file %s: %m", ovmf_vars_from);
+                log_debug("Storing EFI NVRAM state persistently under '%s'.", arg_efi_nvram_state_path);
+        }
 
-                target_fd = open(ovmf_vars_to, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 0600);
-                if (target_fd < 0)
-                        return log_error_errno(errno, "Failed to create regular file for OVMF vars at %s: %m", ovmf_vars_to);
+        _cleanup_(unlink_and_freep) char *ovmf_vars = NULL;
+        if (ovmf_config->vars) {
+                _cleanup_close_ int target_fd = -EBADF;
+                _cleanup_(unlink_and_freep) char *destroy_path = NULL;
+                bool newly_created;
+                const char *state;
+                if (arg_efi_nvram_state_path) {
+                        _cleanup_free_ char *d = strdup(arg_efi_nvram_state_path);
+                        if (!d)
+                                return log_oom();
 
-                r = copy_bytes(source_fd, target_fd, UINT64_MAX, COPY_REFLINK);
-                if (r < 0)
-                        return log_error_errno(r, "Failed to copy bytes from %s to %s: %m", ovmf_vars_from, ovmf_vars_to);
+                        target_fd = openat_report_new(AT_FDCWD, arg_efi_nvram_state_path, O_WRONLY|O_CREAT|O_CLOEXEC, 0600, &newly_created);
+                        if (target_fd < 0)
+                                return log_error_errno(target_fd, "Failed to open file for OVMF vars at %s: %m", arg_efi_nvram_state_path);
 
-                /* This isn't always available so don't raise an error if it fails */
-                (void) copy_times(source_fd, target_fd, 0);
+                        if (newly_created)
+                                destroy_path = TAKE_PTR(d);
+
+                        r = fd_verify_regular(target_fd);
+                        if (r < 0)
+                                return log_error_errno(r, "Not a regular file for OVMF variables at %s: %m", arg_efi_nvram_state_path);
+
+                        state = arg_efi_nvram_state_path;
+                } else {
+                        _cleanup_free_ char *t = NULL;
+                        r = tempfn_random_child(/* p= */ NULL, "vmspawn-", &t);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to create temporary filename: %m");
+
+                        target_fd = open(t, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 0600);
+                        if (target_fd < 0)
+                                return log_error_errno(errno, "Failed to create regular file for OVMF vars at %s: %m", t);
+
+                        newly_created = true;
+                        state = ovmf_vars = TAKE_PTR(t);
+                }
+
+                if (newly_created) {
+                        _cleanup_close_ int source_fd = open(ovmf_config->vars, O_RDONLY|O_CLOEXEC);
+                        if (source_fd < 0)
+                                return log_error_errno(errno, "Failed to open OVMF vars file %s: %m", ovmf_config->vars);
+
+                        r = copy_bytes(source_fd, target_fd, UINT64_MAX, COPY_REFLINK);
+                        if (r < 0)
+                                return log_error_errno(r, "Failed to copy bytes from %s to %s: %m", ovmf_config->vars, state);
+
+                        /* This isn't always available so don't raise an error if it fails */
+                        (void) copy_times(source_fd, target_fd, 0);
+                }
+
+                destroy_path = mfree(destroy_path); /* disarm auto-destroy */
 
                 r = strv_extend_many(
                                 &cmdline,
@@ -2400,11 +2516,11 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
                 if (r < 0)
                         return log_oom();
 
-                escaped_ovmf_vars_to = escape_qemu_value(ovmf_vars_to);
-                if (!escaped_ovmf_vars_to)
+                _cleanup_free_ char *escaped_state = escape_qemu_value(state);
+                if (!escaped_state)
                         return log_oom();
 
-                r = strv_extendf(&cmdline, "file=%s,if=pflash,format=%s", escaped_ovmf_vars_to, ovmf_config_format(ovmf_config));
+                r = strv_extendf(&cmdline, "file=%s,if=pflash,format=%s", escaped_state, ovmf_config_format(ovmf_config));
                 if (r < 0)
                         return log_oom();
         }
@@ -2421,6 +2537,22 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
                         if (r < 0)
                                 return r;
                 }
+        }
+
+        bool need_scsi_controller =
+                arg_image_disk_type == DISK_TYPE_VIRTIO_SCSI && arg_image;
+        if (!need_scsi_controller)
+                FOREACH_ARRAY(drive, arg_extra_drives.drives, arg_extra_drives.n_drives) {
+                        DiskType dt = drive->disk_type >= 0 ? drive->disk_type : arg_image_disk_type;
+                        if (dt == DISK_TYPE_VIRTIO_SCSI) {
+                                need_scsi_controller = true;
+                                break;
+                        }
+                }
+
+        if (need_scsi_controller) {
+                if (strv_extend_many(&cmdline, "-device", "virtio-scsi-pci,id=vmspawn_scsi") < 0)
+                        return log_oom();
         }
 
         if (arg_image) {
@@ -2457,8 +2589,30 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
                 if (strv_extend(&cmdline, "-device") < 0)
                         return log_oom();
 
-                if (strv_extend_joined(&cmdline, "virtio-blk-pci,drive=vmspawn,bootindex=1,serial=", escaped_image_fn) < 0)
-                        return log_oom();
+                switch (arg_image_disk_type) {
+                case DISK_TYPE_VIRTIO_BLK:
+                        if (strv_extend_joined(&cmdline, "virtio-blk-pci,drive=vmspawn,bootindex=1,serial=", escaped_image_fn) < 0)
+                                return log_oom();
+                        break;
+                case DISK_TYPE_VIRTIO_SCSI: {
+                        _cleanup_free_ char *serial = NULL;
+                        if (disk_serial(escaped_image_fn, 30, &serial) < 0)
+                                return log_oom();
+                        if (strv_extend_joined(&cmdline, "scsi-hd,bus=vmspawn_scsi.0,drive=vmspawn,bootindex=1,serial=", serial) < 0)
+                                return log_oom();
+                        break;
+                }
+                case DISK_TYPE_NVME: {
+                        _cleanup_free_ char *serial = NULL;
+                        if (disk_serial(escaped_image_fn, 20, &serial) < 0)
+                                return log_oom();
+                        if (strv_extend_joined(&cmdline, "nvme,drive=vmspawn,bootindex=1,serial=", serial) < 0)
+                                return log_oom();
+                        break;
+                }
+                default:
+                        assert_not_reached();
+                }
 
                 r = grow_image(arg_image, arg_grow_image);
                 if (r < 0)
@@ -2584,11 +2738,37 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
                 if (strv_extend(&cmdline, "-device") < 0)
                         return log_oom();
 
-                if (strv_extendf(&cmdline, "virtio-blk-pci,drive=vmspawn_extra_%zu,serial=%s", i++, escaped_drive_fn) < 0)
-                        return log_oom();
+                DiskType dt = drive->disk_type >= 0 ? drive->disk_type : arg_image_disk_type;
+
+                switch (dt) {
+                case DISK_TYPE_VIRTIO_BLK:
+                        if (strv_extendf(&cmdline, "virtio-blk-pci,drive=vmspawn_extra_%zu,serial=%s", i++, escaped_drive_fn) < 0)
+                                return log_oom();
+                        break;
+                case DISK_TYPE_VIRTIO_SCSI: {
+                        _cleanup_free_ char *serial = NULL;
+                        r = disk_serial(escaped_drive_fn, 30, &serial);
+                        if (r < 0)
+                                return log_oom();
+                        if (strv_extendf(&cmdline, "scsi-hd,bus=vmspawn_scsi.0,drive=vmspawn_extra_%zu,serial=%s", i++, serial) < 0)
+                                return log_oom();
+                        break;
+                }
+                case DISK_TYPE_NVME: {
+                        _cleanup_free_ char *serial = NULL;
+                        r = disk_serial(escaped_drive_fn, 20, &serial);
+                        if (r < 0)
+                                return log_oom();
+                        if (strv_extendf(&cmdline, "nvme,drive=vmspawn_extra_%zu,serial=%s", i++, serial) < 0)
+                                return log_oom();
+                        break;
+                }
+                default:
+                        assert_not_reached();
+                }
         }
 
-        if (arg_console_mode != CONSOLE_GUI) {
+        if (!IN_SET(arg_console_mode, CONSOLE_GUI, CONSOLE_HEADLESS)) {
                 r = strv_prepend(&arg_kernel_cmdline_extra, "console=hvc0");
                 if (r < 0)
                         return log_oom();
@@ -2670,33 +2850,18 @@ static int run_virtual_machine(int kvm_device_fd, int vhost_device_fd) {
                         return log_error_errno(SYNTHETIC_ERRNO(EOPNOTSUPP), "TPM not supported on %s, refusing", architecture_to_string(native_architecture()));
                 if (arg_tpm < 0) {
                         arg_tpm = false;
-                        log_debug("TPM not support on %s, disabling tpm autodetection and continuing", architecture_to_string(native_architecture()));
+                        log_debug("TPM not supported on %s, disabling tpm autodetection and continuing", architecture_to_string(native_architecture()));
                 }
         }
 
         _cleanup_free_ char *swtpm = NULL;
         if (arg_tpm != 0) {
-                if (arg_tpm_state_mode == TPM_STATE_AUTO && !arg_ephemeral) {
+                if (arg_tpm_state_mode == STATE_AUTO && !arg_ephemeral) {
                         assert(!arg_tpm_state_path);
 
-                        const char *p = ASSERT_PTR(arg_image ?: arg_directory);
-
-                        _cleanup_free_ char *parent = NULL;
-                        r = path_extract_directory(p, &parent);
+                        r = make_sidecar_path(".tpmstate", &arg_tpm_state_path);
                         if (r < 0)
-                                return log_error_errno(r, "Failed to extract parent directory from '%s': %m", p);
-
-                        _cleanup_free_ char *filename = NULL;
-                        r = path_extract_filename(p, &filename);
-                        if (r < 0)
-                                return log_error_errno(r, "Failed to extract filename from '%s': %m", p);
-
-                        if (!strextend(&filename, ".tpmstate"))
-                                return log_oom();
-
-                        arg_tpm_state_path = path_join(parent, filename);
-                        if (!arg_tpm_state_path)
-                                return log_oom();
+                                return r;
 
                         log_debug("Storing TPM state persistently under '%s'.", arg_tpm_state_path);
                 }

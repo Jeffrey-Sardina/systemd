@@ -126,6 +126,18 @@
         </varlistentry>
 
         <varlistentry>
+          <term><option>--image-disk-type=<replaceable>TYPE</replaceable></option></term>
+
+          <listitem><para>Specifies the disk type to use for the root disk passed to <option>--image=</option>.
+          Extra drives added via <option>--extra-drive=</option> inherit this disk type unless overridden
+          with an explicit disk type prefix. Takes one of <literal>virtio-blk</literal>,
+          <literal>virtio-scsi</literal>, or <literal>nvme</literal>. Defaults to
+          <literal>virtio-blk</literal>.</para>
+
+          <xi:include href="version-info.xml" xpointer="v261"/></listitem>
+        </varlistentry>
+
+        <varlistentry>
           <term><option>-x</option></term>
           <term><option>--ephemeral</option></term>
 
@@ -224,6 +236,23 @@
           <literal>off</literal>.</para>
 
           <xi:include href="version-info.xml" xpointer="v258"/></listitem>
+        </varlistentry>
+
+        <varlistentry>
+          <term><option>--efi-nvram-state=<replaceable>PATH</replaceable>|auto|off</option></term>
+
+          <listitem><para>Configures where to place the EFI variable NVRAM state. This takes an absolute file
+          system path to a regular file to persistently place the state in. If the file is missing it is
+          created as needed. If set to the special string <literal>auto</literal> a persistent path is
+          automatically derived from the VM image path or directory path, with the
+          <literal>.efinvramstate</literal> suffix appended. If set to the special string
+          <literal>off</literal> the EFI variable NVRAM state is only maintained transiently and flushed out
+          when the VM shuts down. Defaults to <literal>auto</literal>.</para>
+
+          <para>If <option>--ephemeral</option> is specified, <literal>auto</literal> behaves like
+          <literal>off</literal>.</para>
+
+          <xi:include href="version-info.xml" xpointer="v261"/></listitem>
         </varlistentry>
 
         <varlistentry>
@@ -489,13 +518,14 @@
         </varlistentry>
 
         <varlistentry>
-          <term><option>--extra-drive=[<replaceable>FORMAT</replaceable>:]<replaceable>PATH</replaceable></option></term>
+          <term><option>--extra-drive=[<replaceable>FORMAT</replaceable>:][<replaceable>DISKTYPE</replaceable>:]<replaceable>PATH</replaceable></option></term>
 
           <listitem><para>Takes a disk image or block device on the host and supplies it to the virtual
-          machine as another drive. Optionally, the image format can be specified by prefixing the path with
-          <literal>raw</literal> or <literal>qcow2</literal> and a colon. The format defaults to
-          <literal>raw</literal>. Note that <literal>qcow2</literal> is only supported for regular files, not
-          block devices.</para>
+          machine as another drive. Optionally, the image format and/or disk type can be specified by prefixing
+          the path with their values separated by colons. The format and disk type prefixes can appear in any
+          order. The format defaults to <literal>raw</literal> and the disk type defaults to the value of
+          <option>--image-disk-type=</option> (which itself defaults to <literal>virtio-blk</literal>).
+          Note that <literal>qcow2</literal> is only supported for regular files, not block devices.</para>
 
           <xi:include href="version-info.xml" xpointer="v256"/></listitem>
         </varlistentry>
@@ -641,11 +671,13 @@
 
           <listitem><para>Configures how to set up the console of the VM. Takes one of
           <literal>interactive</literal>, <literal>read-only</literal>, <literal>native</literal>,
-          <literal>gui</literal>. Defaults to <literal>interactive</literal>. <literal>interactive</literal>
-          provides an interactive terminal interface to the VM. <literal>read-only</literal> is similar, but
-          is strictly read-only, i.e. does not accept any input from the user. <literal>native</literal> also
-          provides a TTY-based interface, but uses qemu native implementation (which means the qemu monitor
-          is available). <literal>gui</literal> shows the qemu graphical UI.</para>
+          <literal>gui</literal>, <literal>headless</literal>. Defaults to <literal>interactive</literal>.
+          <literal>interactive</literal> provides an interactive terminal interface to the VM.
+          <literal>read-only</literal> is similar, but is strictly read-only, i.e. does not accept any input
+          from the user. <literal>native</literal> also provides a TTY-based interface, but uses qemu native
+          implementation (which means the qemu monitor is available). <literal>gui</literal> shows the qemu
+          graphical UI. <literal>headless</literal> runs the VM without any console, which is useful for
+          automated or scripted usage.</para>
 
           <xi:include href="version-info.xml" xpointer="v256"/></listitem>
         </varlistentry>
