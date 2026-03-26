@@ -9,7 +9,7 @@ What this also means is that Liberated `systemd` is not a divergent development 
 
 ## Distribution/users maintainers, please read
 
-Systemd choice a path to centralizing the "age-verification" process.
+Systemd devs chose a path to centralizing the "age-verification" process.
 
 This itself is a little part of the well-planned operation to sabotage whole OpenSource.
 
