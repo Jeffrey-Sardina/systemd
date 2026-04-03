@@ -33,6 +33,12 @@
 #  define ARCHITECTURE_SUPPORTS_HPET 0
 #endif
 
+#if defined(__x86_64__) || defined(__aarch64__)
+#  define ARCHITECTURE_SUPPORTS_CXL 1
+#else
+#  define ARCHITECTURE_SUPPORTS_CXL 0
+#endif
+
 #if defined(__x86_64__) || defined(__i386__)
 #  define QEMU_MACHINE_TYPE "q35"
 #elif defined(__arm__) || defined(__aarch64__) || defined(__riscv) || defined(__loongarch64) || defined(__m68k__)
@@ -47,6 +53,12 @@
 #  define QEMU_MACHINE_TYPE "sun4u"
 #else
 #  define QEMU_MACHINE_TYPE "none"
+#endif
+
+#if defined(__arm__) || defined(__aarch64__)
+#  define QEMU_SERIAL_CONSOLE_NAME "ttyAMA0"
+#else
+#  define QEMU_SERIAL_CONSOLE_NAME "ttyS0"
 #endif
 
 typedef struct OvmfConfig {
