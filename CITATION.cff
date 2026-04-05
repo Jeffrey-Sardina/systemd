@@ -4,7 +4,7 @@ type: software
 repository-code: 'https://github.com/Jeffrey-Sardina/systemd'
 url: 'https://github.com/Jeffrey-Sardina/systemd'
 abstract: >-
-  Liberated systemd is a form of systemd that removes
+  Liberated systemd is a fork of systemd that removes
   surveillance enablement.
 keywords:
   - Linux
