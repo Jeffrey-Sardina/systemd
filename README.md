@@ -65,7 +65,7 @@ run0 dnf upgrade build/mkosi.builddir/<distribution>~<release>~<architecture>/*.
 
 #Debian/Ubuntu
 run0 apt-get install build/mkosi.builddir/<distribution>~<release>~<architecture>/*.deb
-# the ./ is neededto tell apt to look for local files, rather than online ones
+# the ./ is needed to tell apt to look for local files, rather than online ones
 
 # Arch Linux
 run0 pacman --upgrade --needed --noconfirm build/mkosi.builddir/<distribution>~<release>~<architecture>/*.pkg.tar
