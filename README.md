@@ -99,13 +99,17 @@ It's quite simple: `systemd`, very nicely, has (mostly) atomic commits. There is
 Since age collection is not needed for any aspect of `systemd`, this does not affect other aspects of `systemd`. Any downstream systems that attempt to call age-verification-related functions on Liberated `systemd` will therefore encounter an error. This is done by design. This is also why I have not simply created a "default age" as a lie -- it's about denying applications the ability to assume the presence of an API that enables mass surveillance.
 
 ## How is Liberated `systemd` tested?
-To see how I run testing for this fork, see: https://github.com/Jeffrey-Sardina/systemd-suite. (In short, I run their CI pipeline before pushing changes.)
+To see how I run testing for this fork, see: https://github.com/Jeffrey-Sardina/systemd-suite. (In short, I run their unit tests and CI pipeline before pushing changes. This includes testing Liberated `systemd` in a VM.)
 
 ## Where else can I find Liberated `systemd`?
 In order to allow users to avoid MicroSlop's ecosystem, this repository is made available via Gitea and Codeberg, on top of GitHub. The contents of all repositories are identical, and updated at the same time.
 - github - https://github.com/Jeffrey-Sardina/systemd
 - codeberg (mirror) - https://codeberg.org/Jeffrey-Sardina/systemd
 - gitea (mirror) - https://gitea.com/Jeffrey-Sardina/systemd
+
+Note that https://github.com/Jeffrey-Sardina/systemd and https://github.com/Jeffrey-Sardina/liberated-systemd are fully interchangeable aliases. https://github.com/Jeffrey-Sardina/liberated-systemd was created to allow the repo to be indexed on search engines. Both point to the same repo, and neither URL will expire.
+
+If you are interested, you can find the Liberated `systemd` dev log here: https://github.com/Jeffrey-Sardina/systemd-suite/blob/main/DEV-LOG.md.
 
 ## Have any other changes been made?
 Only in meta-data files. Specifically, aside from code changes needed to liberate systemd from surveillance tooling, I have edited:
