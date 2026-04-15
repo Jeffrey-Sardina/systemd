@@ -44,7 +44,7 @@ Then, we pull and build Liberated systemd from source:
 
 ```bash
 # pull Liberated systemd source code
-git pull https://github.com/Jeffrey-Sardina/systemd.git
+git clone https://github.com/Jeffrey-Sardina/liberated-systemd.git 
 
 # pull mkosi -- latest version
 git clone https://github.com/systemd/mkosi.git
@@ -53,7 +53,7 @@ git clone https://github.com/systemd/mkosi.git
 # your distribtuion must beone of: fedora,debian,kali,ubuntu,postmarketos,arch,opensuse,mageia,centos,rhel,rhel-ubi,openmandriva,rocky,alma,azure,custom
 # replace <distribution> and <release> with their correct values
 # this may take some time
-cd systemd/
+cd liberated-systemd/
 ../mkosi/bin/mkosi -d <distribution> -r <release> -t none -f # see: https://systemd.io/HACKING/
 ```
 
