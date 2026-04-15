@@ -54,7 +54,7 @@ git clone https://github.com/systemd/mkosi.git
 # your distribtuion must beone of: fedora,debian,kali,ubuntu,postmarketos,arch,opensuse,mageia,centos,rhel,rhel-ubi,openmandriva,rocky,alma,azure,custom
 # replace <distribution> and <release> with their correct values
 # this may take some time
-cd systemd/
+cd systemd/ # or `cd liberated-systemd/`, if you cloned from the other alias
 ../mkosi/bin/mkosi -d <distribution> -r <release> -t none -f # see: https://systemd.io/HACKING/
 ```
 
