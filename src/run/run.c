@@ -151,7 +151,8 @@ static int help(void) {
                 "Timer options",
         };
 
-        _cleanup_(table_unref_many) Table *tables[ELEMENTSOF(groups) + 1] = {};
+        Table *tables[ELEMENTSOF(groups)] = {};
+        CLEANUP_ELEMENTS(tables, table_unref_array_clear);
 
         for (size_t i = 0; i < ELEMENTSOF(groups); i++) {
                 r = option_parser_get_help_table_full("systemd-run", groups[i], &tables[i]);
@@ -188,7 +189,7 @@ static int help_sudo_mode(void) {
          * sudo's short switches, hence please do not introduce new short switches unless they have a roughly
          * equivalent purpose on sudo. Use long options for everything private to run0. */
 
-        r = option_parser_get_help_table_full("run0", /* group= */ NULL, &opts_table);
+        r = option_parser_get_help_table_ns("run0", &opts_table);
         if (r < 0)
                 return r;
 
@@ -254,7 +255,7 @@ static int parse_argv(int argc, char *argv[]) {
 
         OptionParser opts = { argc, argv, OPTION_PARSER_STOP_AT_FIRST_NONOPTION, "systemd-run" };
 
-        FOREACH_OPTION(c, &opts, /* on_error= */ return c)
+        FOREACH_OPTION_OR_RETURN(c, &opts)
                 switch (c) {
 
                 OPTION_NAMESPACE("systemd-run"): {}
@@ -782,7 +783,7 @@ static int parse_argv_sudo_mode(int argc, char *argv[]) {
 
         OptionParser opts = { argc, argv, OPTION_PARSER_STOP_AT_FIRST_NONOPTION, "run0" };
 
-        FOREACH_OPTION(c, &opts, /* on_error= */ return c)
+        FOREACH_OPTION_OR_RETURN(c, &opts)
                 switch (c) {
 
                 OPTION_NAMESPACE("run0"): {}

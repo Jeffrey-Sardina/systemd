@@ -9648,7 +9648,8 @@ static int help(void) {
                 "El Torito boot catalog",
         };
 
-        _cleanup_(table_unref_many) Table *option_tables[ELEMENTSOF(option_groups) + 1] = {};
+        Table *option_tables[ELEMENTSOF(option_groups)] = {};
+        CLEANUP_ELEMENTS(option_tables, table_unref_array_clear);
 
         for (size_t i = 0; i < ELEMENTSOF(option_groups); i++) {
                 r = option_parser_get_help_table_group(option_groups[i], &option_tables[i]);
@@ -9688,7 +9689,7 @@ static int parse_argv(int argc, char *argv[]) {
         bool auto_public_key_pcr_mask = true, auto_pcrlock = true;
         int r;
 
-        FOREACH_OPTION(c, &opts, /* on_error= */ return c)
+        FOREACH_OPTION_OR_RETURN(c, &opts)
                 switch (c) {
 
                 OPTION_GROUP("Options"): {}
@@ -9896,7 +9897,13 @@ static int parse_argv(int argc, char *argv[]) {
 
                 OPTION_LONG("list-devices", NULL,
                             "List candidate block devices to operate on"):
-                        r = blockdev_list(BLOCKDEV_LIST_REQUIRE_PARTITION_SCANNING|BLOCKDEV_LIST_SHOW_SYMLINKS|BLOCKDEV_LIST_IGNORE_ZRAM, /* ret_devices= */ NULL, /* ret_n_devices= */ NULL);
+                        r = blockdev_list(
+                                        BLOCKDEV_LIST_SHOW_SYMLINKS|
+                                        BLOCKDEV_LIST_REQUIRE_PARTITION_SCANNING|
+                                        BLOCKDEV_LIST_IGNORE_ZRAM|
+                                        BLOCKDEV_LIST_IGNORE_READ_ONLY,
+                                        /* ret_devices= */ NULL,
+                                        /* ret_n_devices= */ NULL);
                         if (r < 0)
                                 return r;
 
@@ -10876,6 +10883,7 @@ static int vl_method_list_candidate_devices(
                         BLOCKDEV_LIST_REQUIRE_PARTITION_SCANNING|
                         BLOCKDEV_LIST_IGNORE_ZRAM|
                         BLOCKDEV_LIST_METADATA|
+                        BLOCKDEV_LIST_IGNORE_READ_ONLY|
                         (p.ignore_empty ? BLOCKDEV_LIST_IGNORE_EMPTY : 0)|
                         (p.ignore_root ? BLOCKDEV_LIST_IGNORE_ROOT : 0),
                         &l,

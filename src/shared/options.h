@@ -150,10 +150,13 @@ typedef struct Option {
                     "(file, provider:PROVIDER)")
 
 /* A form used in udev code for compatibility. -V is accepted but not documented. */
-#define OPTION_COMMON_VERSION_WITH_HIDDEN_V                                      \
-        OPTION_COMMON_VERSION: {}                                                \
+#define OPTION_COMMON_VERSION_WITH_HIDDEN_V                             \
+        OPTION_COMMON_VERSION: {}                                       \
         OPTION_SHORT('V', NULL, /* help= */ NULL)
 
+#define OPTION_COMMON_RESOLVE_NAMES                                     \
+        OPTION('N', "resolve-names", "MODE",                            \
+               "When to resolve users and groups (early, late, or never)")
 
 /* This is magically mapped to the beginning and end of the section */
 extern const Option __start_SYSTEMD_OPTIONS[];
@@ -213,19 +216,27 @@ int option_parse(
                 const Option options_end[],
                 OptionParser *state);
 
-/* Iterate over options. */
-#define FOREACH_OPTION(c, state, on_error)                              \
-        for (int c; (c = option_parse(ALIGN_PTR(__start_SYSTEMD_OPTIONS), __stop_SYSTEMD_OPTIONS, state)) != 0; ) \
-                if (c < 0) {                                            \
-                        on_error;                                       \
-                        break;                                          \
-                } else
+/* Iterate over options. Don't forget to handle errors (negative c)! */
+#define FOREACH_OPTION(c, state)                                        \
+        for (int c; (c = option_parse(ALIGN_PTR(__start_SYSTEMD_OPTIONS), __stop_SYSTEMD_OPTIONS, state)) != 0; )
 
-char* option_parser_next_arg(const OptionParser *state);
+#define FOREACH_OPTION_OR_RETURN(c, state)                              \
+        for (int c; (c = option_parse(ALIGN_PTR(__start_SYSTEMD_OPTIONS), __stop_SYSTEMD_OPTIONS, state)) != 0; ) \
+                if (c < 0)                                              \
+                        return c;                                       \
+                else
+
+/* Those helpers are used *during* option parsing and allow looking at or taking the next item in
+ * the argv array, either an option or a positional parameter. */
+char* option_parser_peek_next_arg(const OptionParser *state);
 char* option_parser_consume_next_arg(OptionParser *state);
 
+/* Those helpers are used *after* option parsing and return the positional arguments (and unparsed
+ * options in case option parsing was stopped early, e.g. via "--"). */
 char** option_parser_get_args(const OptionParser *state);
 size_t option_parser_get_n_args(const OptionParser *state);
+char* option_parser_get_arg(const OptionParser *state, size_t i);
+
 char* option_get_synopsis(const Option *opt, const char *joiner, bool show_metavar);
 
 int _option_parser_get_help_table_full(
@@ -236,6 +247,8 @@ int _option_parser_get_help_table_full(
                 Table **ret);
 #define option_parser_get_help_table_full(namespace, group, ret)        \
         _option_parser_get_help_table_full(ALIGN_PTR(__start_SYSTEMD_OPTIONS), __stop_SYSTEMD_OPTIONS, namespace, group, ret)
+#define option_parser_get_help_table_ns(ns, ret)                        \
+        option_parser_get_help_table_full(ns, /* group= */ NULL, ret)
 #define option_parser_get_help_table_group(group, ret)                  \
         option_parser_get_help_table_full(/* namespace= */ NULL, group, ret)
 #define option_parser_get_help_table(ret)                               \

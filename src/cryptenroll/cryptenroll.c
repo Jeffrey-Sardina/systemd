@@ -31,7 +31,6 @@
 #include "process-util.h"
 #include "string-table.h"
 #include "string-util.h"
-#include "strv.h"
 #include "tpm2-pcr.h"
 #include "tpm2-util.h"
 
@@ -242,7 +241,8 @@ static int help(void) {
                 "TPM2 Enrollment",
         };
 
-        _cleanup_(table_unref_many) Table *tables[ELEMENTSOF(groups) + 1] = {};
+        Table *tables[ELEMENTSOF(groups)] = {};
+        CLEANUP_ELEMENTS(tables, table_unref_array_clear);
 
         for (size_t i = 0; i < ELEMENTSOF(groups); i++) {
                 r = option_parser_get_help_table_group(groups[i], &tables[i]);
@@ -279,7 +279,7 @@ static int parse_argv(int argc, char *argv[]) {
         OptionParser opts = { argc, argv };
         int r;
 
-        FOREACH_OPTION(c, &opts, /* on_error= */ return c)
+        FOREACH_OPTION_OR_RETURN(c, &opts)
                 switch (c) {
 
                 OPTION_COMMON_HELP:
@@ -579,14 +579,12 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
                 }
 
-        char **args = option_parser_get_args(&opts);
+        if (option_parser_get_n_args(&opts) > 1)
+                return log_error_errno(SYNTHETIC_ERRNO(EINVAL), "Too many arguments, refusing.");
 
-        if (strv_length(args) > 1)
-                return log_error_errno(SYNTHETIC_ERRNO(EINVAL),
-                                       "Too many arguments, refusing.");
-
-        if (args[0])
-                r = parse_path_argument(args[0], false, &arg_node);
+        const char *arg = option_parser_get_arg(&opts, 0);
+        if (arg)
+                r = parse_path_argument(arg, false, &arg_node);
         else if (!wipe_requested())
                 r = determine_default_node();
         else

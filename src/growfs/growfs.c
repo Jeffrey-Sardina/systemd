@@ -162,7 +162,7 @@ static int parse_argv(int argc, char *argv[]) {
 
         OptionParser opts = { argc, argv };
 
-        FOREACH_OPTION(c, &opts, /* on_error= */ return c)
+        FOREACH_OPTION_OR_RETURN(c, &opts)
                 switch (c) {
 
                 OPTION_COMMON_HELP:
@@ -181,8 +181,7 @@ static int parse_argv(int argc, char *argv[]) {
                                        "%s expects exactly one argument (the mount point).",
                                        program_invocation_short_name);
 
-        arg_target = option_parser_get_args(&opts)[0];
-
+        arg_target = option_parser_get_arg(&opts, 0);
         return 1;
 }
 

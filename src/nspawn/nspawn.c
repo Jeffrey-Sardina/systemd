@@ -405,7 +405,8 @@ static int help(void) {
                 "Other",
         };
 
-        _cleanup_(table_unref_many) Table* tables[ELEMENTSOF(groups) + 1] = {};
+        Table* tables[ELEMENTSOF(groups)] = {};
+        CLEANUP_ELEMENTS(tables, table_unref_array_clear);
 
         for (size_t i = 0; i < ELEMENTSOF(groups); i++) {
                 r = option_parser_get_help_table_group(groups[i], &tables[i]);
@@ -604,7 +605,7 @@ static int parse_argv(int argc, char *argv[]) {
 
         OptionParser opts = { argc, argv, OPTION_PARSER_STOP_AT_FIRST_NONOPTION };
 
-        FOREACH_OPTION(c, &opts, /* on_error= */ return c) {
+        FOREACH_OPTION_OR_RETURN(c, &opts) {
                 switch (c) {
 
                 OPTION_COMMON_HELP:
@@ -1420,7 +1421,7 @@ static int parse_argv(int argc, char *argv[]) {
                                  * the old container user functionality. To maintain backwards compatibility
                                  * with the space-separated form (--user NAME), if the next opts.arg does not look
                                  * like an option, interpret it as a user name. */
-                                const char *t = option_parser_next_arg(&opts);
+                                const char *t = option_parser_peek_next_arg(&opts);
                                 if (t && t[0] != '-') {
                                         opts.arg = option_parser_consume_next_arg(&opts);
                                         log_warning("--user NAME is deprecated, use --uid=NAME instead.");
